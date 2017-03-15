@@ -33,34 +33,46 @@ uint32_t s[64] = {
 
 /*** Helper Function Prototypes ******************************************/
 
-void md5_round(uint32_t *h, uint32_t *w);
+int get_md5sum_le(FILE *file, uint32_t sum[]);
+int get_md5sum_be(FILE *file, uint32_t sum[]);
+void md5_round_le(uint32_t *h, uint32_t *w);
+void md5_round_be(uint32_t *h, uint32_t *w);
 void append_bit_count(uint64_t bit_count, uint32_t *w);
 uint32_t rightrotate(uint32_t x, int n);
 uint32_t leftrotate(uint32_t x, int n);
 void print32_bits(uint32_t x);
 void print64_bits(uint64_t x);
 uint32_t endianflip(uint32_t x);
+void set_bits(uint32_t *A, uint32_t *B, uint32_t *C, uint32_t *D,
+		uint32_t F, uint32_t g, uint32_t *w, uint32_t *s, int i);
 
 /*** Functions ***********************************************************/
 
 int get_md5sum(FILE *file, uint32_t sum[]) 
 {
-	int ret_val;
+	int endianess = 1;
+	int ret_val = 0;
+	if(*(char *)&endianess == 1) {
+		/* little endian */
+		ret_val = get_md5sum_le(file, sum);
+	} else {
+		/* big endian */
+		ret_val = get_md5sum_be(file, sum);
+	}
+	return ret_val;
+}
+
+/*** Helper Functions ****************************************************/
+
+int get_md5sum_le(FILE *file, uint32_t sum[]) 
+{
+	int ret_val = 0;
 	uint32_t w[16];
 	uint32_t h[4];
 	unsigned char *w_char = (unsigned char *)w;
 	int i = 0;
 	int readc;
 	uint64_t bit_count = 0;
-
-
-	h[0] = (0x67452301);
-	h[1] = (0xefcdab89);
-	h[2] = (0x98badcfe);
-	h[3] = (0x10325476);
-
-	ret_val = 0;
-	memset(w, 0, 16 * sizeof(uint32_t));
 
 	if (file == NULL) {
 		return 1;
@@ -69,17 +81,28 @@ int get_md5sum(FILE *file, uint32_t sum[])
 		return 2;
 	}
 
+	memset(w, 0, 16 * sizeof(uint32_t));
+
+	/* little endian */
+	h[0] = (0x67452301);
+	h[1] = (0xefcdab89);
+	h[2] = (0x98badcfe);
+	h[3] = (0x10325476);
+
 	while (TRUE) {
 		readc = fread(w, 1, 64, file);
 		bit_count += readc * 8;
-		if (readc < 56) {
+		if (readc == 64) {
+			/* run md5 round */
+			md5_round_le(h, w);
+		} else if (readc < 56) {
 			w_char[readc] = (unsigned char)128;
 			for (i = readc + 1; i < 56; i++) {
 				w_char[i] = '\0';
 			}
 			append_bit_count(bit_count, w);
 
-			md5_round(h, w);
+			md5_round_le(h, w);
 			
 			break;
 		} else if (readc < 64) {
@@ -88,41 +111,106 @@ int get_md5sum(FILE *file, uint32_t sum[])
 				w_char[i] = '\0';
 			}
 
-			md5_round(h, w);
+			md5_round_le(h, w);
 
 			for (i = 0; i < 56; i++) {
 				w_char[i] = '\0';
 			}
 			append_bit_count(bit_count, w);
 
-			md5_round(h, w);
+			md5_round_le(h, w);
 			break;
 
 		} else {
-			/* run md5 round */
-			md5_round(h, w);
+			printf("some weird reading io error\n");
 		}
 	}
 
-	sum[0] = endianflip(h[0]);
-	sum[1] = endianflip(h[1]);
-	sum[2] = endianflip(h[2]);
-	sum[3] = endianflip(h[3]);
+	sum[0] = ntohl(h[0]);
+	sum[1] = ntohl(h[1]);
+	sum[2] = ntohl(h[2]);
+	sum[3] = ntohl(h[3]);
 	
 	return ret_val;
 }
 
-/*** Helper Functions ****************************************************/
+int get_md5sum_be(FILE *file, uint32_t sum[]) 
+{
+	int ret_val = 0;
+	uint32_t w[16];
+	uint32_t h[4];
+	unsigned char *w_char = (unsigned char *)w;
+	int i = 0;
+	int readc;
+	uint64_t bit_count = 0;
 
-void md5_round(uint32_t *h, uint32_t *w) {
-	uint32_t A, B, C, D, F, g, dTemp;
-	int i;
-
-	/*
-	for (i = 0; i < 16; i++) {
-		w[i] = ntohl(w[i]);
+	if (file == NULL) {
+		return 1;
 	}
-	*/
+	if (sum == NULL) {
+		return 2;
+	}
+
+	memset(w, 0, 16 * sizeof(uint32_t));
+
+	h[0] = (0x01234567);
+	h[1] = (0x89abcdef);
+	h[2] = (0xfedcba98);
+	h[3] = (0x76543210);
+	for (i = 0; i < 64; i++) {
+		K[i] = endianflip(K[i]);
+	}
+
+	/* big endian */
+	while (TRUE) {
+		readc = fread(w, 1, 64, file);
+		bit_count += readc * 8;
+		if (readc == 64) {
+			/* run md5 round */
+			md5_round_be(h, w);
+		} else if (readc < 56) {
+			w_char[readc] = (unsigned char)128;
+			for (i = readc + 1; i < 56; i++) {
+				w_char[i] = '\0';
+			}
+			append_bit_count(bit_count, w);
+
+			md5_round_be(h, w);
+			
+			break;
+		} else if (readc < 64) {
+			w_char[readc] = (unsigned char)128;
+			for (i = readc + 1; i < 64; i++) {
+				w_char[i] = '\0';
+			}
+
+			md5_round_be(h, w);
+
+			for (i = 0; i < 56; i++) {
+				w_char[i] = '\0';
+			}
+			append_bit_count(bit_count, w);
+
+			md5_round_be(h, w);
+			break;
+
+		} else {
+			printf("some weird reading io error\n");
+		}
+	}
+
+	sum[0] = ntohl(h[0]);
+	sum[1] = ntohl(h[1]);
+	sum[2] = ntohl(h[2]);
+	sum[3] = ntohl(h[3]);
+	
+	return ret_val;
+}
+
+
+void md5_round_le(uint32_t *h, uint32_t *w) {
+	uint32_t A, B, C, D, F, g;
+	int i;
 
 	A = h[0];
 	B = h[1];
@@ -130,51 +218,65 @@ void md5_round(uint32_t *h, uint32_t *w) {
 	D = h[3];
 
 	for (i = 0; i < 16; i++) {
-		/*
-		F = (B & C) | ((~B) & D);
-		*/
 		F = D ^ (B & (C ^ D));
 		g = i;
-
-		dTemp = D;
-		D = C;
-		C = B;
-		B = B + leftrotate((A + F + K[i] + w[g]), s[i]);
-		A = dTemp;
-
+		set_bits(&A, &B, &C, &D, F, g, w, s, i);
 	}
 	for (i = 16; i < 32; i++) {
-		/*
-		F = (D & B) | ((~D) & C);
-		*/
+		F = C ^ (D & (B ^ C));
+		g = (5 * i + 1) & 15;
+		set_bits(&A, &B, &C, &D, F, g, w, s, i);
+	}
+	for (i = 32; i < 48; i++) {
+		F = B ^ C ^ D;
+		g = (3 * i + 5) & 15;
+		set_bits(&A, &B, &C, &D, F, g, w, s, i);
+	}
+	for (i = 48; i < 64; i++) {
+		F = C ^ (B | (~D));
+		g = (7 * i) & 15;
+		set_bits(&A, &B, &C, &D, F, g, w, s, i);
+	}
+	
+	h[0] = h[0] + A;
+	h[1] = h[1] + B;
+	h[2] = h[2] + C;
+	h[3] = h[3] + D;
+}
+
+void md5_round_be(uint32_t *h, uint32_t *w) {
+	uint32_t A, B, C, D, F, g;
+	int i;
+
+	/* big endian */
+	for (i = 0; i < 16; i++) {
+		w[i] = endianflip(w[i]);
+	}
+
+	A = h[0];
+	B = h[1];
+	C = h[2];
+	D = h[3];
+
+	for (i = 0; i < 16; i++) {
+		F = D ^ (B & (C ^ D));
+		g = i;
+		set_bits(&A, &B, &C, &D, F, g, w, s, i);
+	}
+	for (i = 16; i < 32; i++) {
 		F = C ^ (D & (B ^ C));
 		g = (5 * i + 1) % 16;
-
-		dTemp = D;
-		D = C;
-		C = B;
-		B = B + leftrotate((A + F + K[i] + w[g]), s[i]);
-		A = dTemp;
+		set_bits(&A, &B, &C, &D, F, g, w, s, i);
 	}
 	for (i = 32; i < 48; i++) {
 		F = B ^ C ^ D;
 		g = (3 * i + 5) % 16;
-
-		dTemp = D;
-		D = C;
-		C = B;
-		B = B + leftrotate((A + F + K[i] + w[g]), s[i]);
-		A = dTemp;
+		set_bits(&A, &B, &C, &D, F, g, w, s, i);
 	}
 	for (i = 48; i < 64; i++) {
 		F = C ^ (B | (~D));
 		g = (7 * i) % 16;
-
-		dTemp = D;
-		D = C;
-		C = B;
-		B = B + leftrotate((A + F + K[i] + w[g]), s[i]);
-		A = dTemp;
+		set_bits(&A, &B, &C, &D, F, g, w, s, i);
 	}
 	
 	h[0] = h[0] + A;
@@ -270,4 +372,15 @@ uint32_t endianflip(uint32_t x)
 	c[1] ^= c[2];
 
 	return x;
+}
+
+void set_bits(uint32_t *A, uint32_t *B, uint32_t *C, uint32_t *D,
+		uint32_t F, uint32_t g, uint32_t *w, uint32_t *s, int i)
+{
+	uint32_t dTemp;
+	dTemp = *D;
+	*D = *C;
+	*C = *B;
+	*B = *B + leftrotate((*A + F + K[i] + w[g]), s[i]);
+	*A = dTemp;
 }

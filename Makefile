@@ -11,7 +11,7 @@ EXES		= md5sum
 
 ### FLAGS #################################################################
 
-FLAGS = -Wall -Wextra -ansi -pedantic -g -O3
+FLAGS = -Wall -Wextra -pedantic -O3
 DBGFLAGS = #-DDEBUG
 
 ### COMMANDS ##############################################################
